@@ -11,20 +11,34 @@
     Build configuration: Release (default) or Debug.
 
 .PARAMETER Clean
-    Delete the build directory and exit.
+    Delete the build and output directories and exit.
+
+.PARAMETER Package
+    After building, create the portable zip and the NSIS installer in
+    output/package. Always uses the Release configuration.
+
+.PARAMETER Version
+    Version string used for the package file names and installer metadata.
 
 .EXAMPLE
     .\build.ps1
 
 .EXAMPLE
     .\build.ps1 -Configuration Debug
+
+.EXAMPLE
+    .\build.ps1 -Package -Version 1.0.1
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
 
-    [switch]$Clean
+    [switch]$Clean,
+
+    [switch]$Package,
+
+    [string]$Version = '1.0.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +59,11 @@ if ($Clean) {
     exit 0
 }
 
+if ($Package -and $Configuration -ne 'Release') {
+    Write-Host 'Packaging uses the Release build; ignoring -Configuration Debug.' -ForegroundColor Yellow
+    $Configuration = 'Release'
+}
+
 function Get-CMakePath {
     $command = Get-Command cmake.exe -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
@@ -59,6 +78,30 @@ function Get-CMakePath {
     }
 
     throw 'cmake.exe not found. Install CMake 3.20 or newer and make sure it is on PATH.'
+}
+
+function Get-MakensisPath {
+    $command = Get-Command makensis.exe -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+
+    $candidates = @(
+        (Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'),
+        (Join-Path $env:ProgramFiles 'NSIS\makensis.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\NSIS\makensis.exe'),
+        (Join-Path $env:LOCALAPPDATA 'tauri\NSIS\Bin\makensis.exe'),
+        (Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe')
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+
+    throw 'makensis.exe not found. Install NSIS (winget install NSIS.NSIS) to build the installer.'
+}
+
+function Get-FourPartVersion([string]$Value) {
+    $parts = @($Value -split '[^\d]+' | Where-Object { $_ -ne '' })
+    while ($parts.Count -lt 4) { $parts += '0' }
+    return ($parts[0..3] -join '.')
 }
 
 function Find-VcVars32 {
@@ -142,3 +185,43 @@ if (-not (Test-Path -LiteralPath $exe)) {
 
 $size = (Get-Item -LiteralPath $exe).Length
 Write-Host ("Built {0} ({1:N0} bytes)" -f $exe, $size) -ForegroundColor Green
+
+if ($Package) {
+    $packageDir = Join-Path $Root 'output\package'
+    New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+    Write-Step 'Creating portable zip'
+    $stageDir = Join-Path $packageDir "KeyCastOW-$Version"
+    if (Test-Path -LiteralPath $stageDir) {
+        Remove-Item -LiteralPath $stageDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+    Copy-Item -LiteralPath $exe -Destination $stageDir
+    Copy-Item -LiteralPath (Join-Path $Root 'README.md') -Destination $stageDir
+
+    $zipPath = Join-Path $packageDir "KeyCastOW-$Version-portable.zip"
+    if (Test-Path -LiteralPath $zipPath) {
+        Remove-Item -LiteralPath $zipPath -Force
+    }
+    Compress-Archive -Path (Join-Path $stageDir '*') -DestinationPath $zipPath
+    Remove-Item -LiteralPath $stageDir -Recurse -Force
+
+    Write-Step 'Building installer'
+    $makensis = Get-MakensisPath
+    $version4 = Get-FourPartVersion $Version
+    $exeDir = Split-Path -Parent $exe
+    $nsi = Join-Path $Root 'installer\keycastow.nsi'
+    & $makensis /V2 `
+        "/DAPP_VERSION=$Version" `
+        "/DAPP_VERSION4=$version4" `
+        "/DSOURCE_DIR=$exeDir" `
+        "/DOUTPUT_DIR=$packageDir" `
+        "/DPROJECT_DIR=$Root" `
+        $nsi
+    if ($LASTEXITCODE -ne 0) { throw 'NSIS packaging failed.' }
+
+    Write-Host 'Packages:'
+    Get-ChildItem -LiteralPath $packageDir -File | Sort-Object Name | ForEach-Object {
+        Write-Host ("  {0} ({1:N0} bytes)" -f $_.FullName, $_.Length) -ForegroundColor Green
+    }
+}

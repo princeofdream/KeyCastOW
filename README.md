@@ -18,6 +18,21 @@ keystroke visualizer for Windows, lets you easily display your keystrokes while 
 The script locates the Visual C++ toolchain, configures CMake and builds
 `output/target/<Configuration>/keycastow.exe`.
 
+## package
+
+  powershell -ExecutionPolicy Bypass -File .\build.ps1 -Package
+  # custom version:
+  powershell -ExecutionPolicy Bypass -File .\build.ps1 -Package -Version 1.0.1
+
+Creates in `output/package/`:
+
+* `KeyCastOW-<version>-portable.zip` - portable ("green") build
+* `KeyCastOW-<version>-setup.exe` - NSIS installer, per-user or all-users
+
+The installer requires NSIS (`winget install NSIS.NSIS`). A per-user
+install goes to `%LOCALAPPDATA%\Programs\KeyCastOW`; a per-machine install
+goes to `Program Files` and keeps settings in `%APPDATA%\KeyCastOW`.
+
 ## Author
 
 lijin <princeofdream@outlook.com>

@@ -1,9 +1,7 @@
 // Copyright © 2014 Brook Hong. All Rights Reserved.
 //
 
-// msbuild /p:platform=win32 /p:Configuration=Release
-// msbuild keycastow.vcxproj /t:Clean
-// rc keycastow.rc && cl -DUNICODE -D_UNICODE keycast.cpp keylog.cpp keycastow.res user32.lib shell32.lib gdi32.lib Comdlg32.lib comctl32.lib
+// Build with CMake: see README.md and build.ps1.
 
 #include <windows.h>
 #include <windowsx.h>
@@ -21,6 +19,16 @@ CTimer showTimer;
 CTimer previewTimer;
 
 WCHAR iniFile[MAX_PATH];
+
+// Returns TRUE when a probe file can be created in the given directory.
+static BOOL CanWriteToDirectory(LPCWSTR dir) {
+    WCHAR probe[MAX_PATH];
+    if (!GetTempFileName(dir, L"kcw", 0, probe)) {
+        return FALSE;
+    }
+    DeleteFile(probe);
+    return TRUE;
+}
 
 #define MAXCHARS 4096
 WCHAR textBuffer[MAXCHARS];
@@ -1188,9 +1196,30 @@ int WINAPI WinMain(HINSTANCE hThisInst, HINSTANCE hPrevInst,
         |ICC_UPDOWN_CLASS|ICC_USEREX_CLASSES|ICC_WIN95_CLASSES;
     InitCommonControlsEx(&icex);
 
+    WCHAR exeDir[MAX_PATH];
     GetModuleFileName(NULL, iniFile, MAX_PATH);
+    wcscpy_s(exeDir, MAX_PATH, iniFile);
+    WCHAR* lastSlash = wcsrchr(exeDir, L'\\');
+    if (lastSlash) {
+        *lastSlash = L'\0';
+    }
+
     iniFile[wcslen(iniFile)-4] = '\0';
     wcscat_s(iniFile, MAX_PATH, L".ini");
+
+    // When the executable lives in a read-only location (for example a
+    // per-machine install under Program Files), keep settings in
+    // %APPDATA%\KeyCastOW. Portable runs keep using the ini next to the exe.
+    if (!CanWriteToDirectory(exeDir)) {
+        WCHAR appData[MAX_PATH];
+        DWORD length = GetEnvironmentVariable(L"APPDATA", appData, MAX_PATH);
+        if (length > 0 && length < MAX_PATH) {
+            WCHAR settingsDir[MAX_PATH];
+            _snwprintf_s(settingsDir, MAX_PATH, _TRUNCATE, L"%s\\KeyCastOW", appData);
+            CreateDirectory(settingsDir, NULL);
+            _snwprintf_s(iniFile, MAX_PATH, _TRUNCATE, L"%s\\keycastow.ini", settingsDir);
+        }
+    }
 #ifdef _DEBUG
     wcscpy_s(capFile, MAX_PATH, iniFile);
     capFile[wcslen(capFile)-4] = '\0';
